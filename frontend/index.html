@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>复杂道路场景多目标识别系统</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f8fafc; color: #111827; }
+    h1 { margin-bottom: 8px; }
+    .container { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+    .panel { background: white; border-radius: 12px; padding: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+    .video-wrap { position: relative; width: 100%; max-width: 960px; }
+    video, canvas { width: 100%; border-radius: 8px; }
+    canvas { position: absolute; inset: 0; pointer-events: none; }
+    .kpi { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .kpi div { background: #eef2ff; padding: 10px; border-radius: 8px; }
+    pre { background: #111827; color: #e5e7eb; padding: 8px; border-radius: 8px; height: 260px; overflow: auto; }
+    button { padding: 8px 12px; border: none; background: #2563eb; color: white; border-radius: 8px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>复杂道路场景多目标识别系统</h1>
+  <p>支持目标：person / rider / car / bus / truck / bike / motorcycle / traffic light / traffic sign / train</p>
+
+  <div class="container">
+    <div class="panel">
+      <div class="video-wrap">
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="overlay"></canvas>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:10px;">
+        <button id="startBtn">开始实时检测</button>
+        <button id="stopBtn">停止</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>运行指标</h3>
+      <div class="kpi">
+        <div>Latency: <b id="latency">0 ms</b></div>
+        <div>FPS: <b id="fps">0</b></div>
+        <div>Total Frames: <b id="total">0</b></div>
+        <div>Detections: <b id="detNum">0</b></div>
+      </div>
+      <h3>类别分布</h3>
+      <pre id="dist">{}</pre>
+    </div>
+  </div>
+
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('overlay');
+const ctx = canvas.getContext('2d');
+const latencyEl = document.getElementById('latency');
+const fpsEl = document.getElementById('fps');
+const totalEl = document.getElementById('total');
+const detNumEl = document.getElementById('detNum');
+const distEl = document.getElementById('dist');
+let ws = null;
+let timer = null;
+
+function drawBoxes(dets){
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.lineWidth = 2;
+  ctx.font = '14px sans-serif';
+  dets.forEach(d => {
+    const [x1,y1,x2,y2] = d.bbox;
+    ctx.strokeStyle = '#22c55e';
+    ctx.fillStyle = '#22c55e';
+    ctx.strokeRect(x1,y1,x2-x1,y2-y1);
+    const txt = `${d.label} ${Math.round(d.confidence*100)}%`;
+    ctx.fillRect(x1, Math.max(0,y1-18), ctx.measureText(txt).width + 8, 18);
+    ctx.fillStyle = '#111827';
+    ctx.fillText(txt, x1+4, Math.max(12,y1-5));
+  });
+}
+
+async function openCamera(){
+  const stream = await navigator.mediaDevices.getUserMedia({video:true,audio:false});
+  video.srcObject = stream;
+  await video.play();
+}
+
+function captureFrameBase64(){
+  const temp = document.createElement('canvas');
+  temp.width = video.videoWidth;
+  temp.height = video.videoHeight;
+  const tctx = temp.getContext('2d');
+  tctx.drawImage(video,0,0,temp.width,temp.height);
+  const dataUrl = temp.toDataURL('image/jpeg',0.75);
+  return dataUrl.split(',')[1];
+}
+
+document.getElementById('startBtn').onclick = async () => {
+  await openCamera();
+  ws = new WebSocket(`ws://${location.host}/ws/stream`);
+  ws.onmessage = (evt) => {
+    const payload = JSON.parse(evt.data);
+    if(payload.error) return;
+    drawBoxes(payload.detections || []);
+    latencyEl.innerText = `${payload.latency_ms} ms`;
+    fpsEl.innerText = payload.metrics?.avg_fps ?? 0;
+    totalEl.innerText = payload.metrics?.total_frames ?? 0;
+    detNumEl.innerText = (payload.detections || []).length;
+    distEl.textContent = JSON.stringify(payload.metrics?.class_distribution || {}, null, 2);
+  };
+
+  timer = setInterval(() => {
+    if(ws && ws.readyState === 1 && video.videoWidth > 0){
+      ws.send(captureFrameBase64());
+    }
+  }, 150);
+};
+
+document.getElementById('stopBtn').onclick = () => {
+  if(timer) clearInterval(timer);
+  if(ws) ws.close();
+  const stream = video.srcObject;
+  if(stream){
+    stream.getTracks().forEach(t => t.stop());
+  }
+};
+</script>
+</body>
+</html>
