@@ -1,0 +1,7 @@
+{
+  "name": "YOLO Vision Dashboard",
+  "description": "A real-time multi-object detection system supporting direct uploads of images, videos, and ONNX models for browser-based inference.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
